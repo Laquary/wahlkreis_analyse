@@ -193,6 +193,7 @@
                     } else {
                         lastClickedWkrNr = clickedWkrNr;
                         updateStyles();
+                        onWkrClick(clickedWkrNr);
                     }
                 });
             }
@@ -248,8 +249,7 @@
             }
 
             // Event für Klick auf Wahlkreis
-            function onWkrClick(e) {
-                const wkrNr = e.target.feature.properties.WKR_NR;
+            function onWkrClick(wkrNr) {
                 if (lastClickedWkrNr === wkrNr) {
                     lastClickedWkrNr = null;
                     resetStyles();
