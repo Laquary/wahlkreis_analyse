@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bundestagswahl 2021</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"/>
+    <style>
+        #map {
+            height: 80vh; /* Platz für Schieberegler und Legende lassen */
+            width: 100%;
+        }
+        #controls {
+            text-align: center;
+            margin: 10px 0;
+        }
+        #slider-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 10px;
+        }
+        #slider {
+            width: 300px;
+        }
+        #legend-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+        #legend {
+            width: 300px;
+            height: 20px;
+            border: 1px solid #000;
+        }
+        #legend-labels {
+            display: flex;
+            justify-content: space-between;
+            width: 300px; /* Gleiche Breite wie die Skala */
+            font-size: 12px;
+            margin-top: 5px; /* Abstand zur Farbskala */
+            text-align: center; /* Zentriere die Texte unter der Skala */
+            position: relative;
+        }
+        .legend-label {
+            position: absolute;
+            transform: translateX(-50%);
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="controls">
+        <div id="slider-container">
+            <label for="slider">Mindestwert: </label>
+            <input type="range" id="slider" min="0.0" max="1.0" step="0.01" value="0.50">
+            <span id="slider-value">0.50</span>
+        </div>
+        <div id="legend-container">
+            <div id="legend"></div>
+            <div id="legend-labels">
+                <span id="label-min" class="legend-label">0%</span>
+                <span id="label-quarter" class="legend-label"></span>
+                <span id="label-half" class="legend-label"></span>
+                <span id="label-three-quarters" class="legend-label"></span>
+                <span id="label-max" class="legend-label">100%</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+
+    <script>
+        (async () => {
+            let map = L.map('map', {
+                center: [51.1657, 10.4515],
+                zoom: 6,
+            });
+
+            map.getContainer().style.backgroundColor = '#f0f0f0';
+
+            let lastClickedWkrNr = null;
+            let minSimilarity = 0.5;
+            const slider = document.getElementById('slider');
+            const sliderValue = document.getElementById('slider-value');
+            const legend = document.getElementById('legend');
+            const legendLabels = {
+                min: document.getElementById('label-min'),
+                quarter: document.getElementById('label-quarter'),
+                half: document.getElementById('label-half'),
+                threeQuarters: document.getElementById('label-three-quarters'),
+                max: document.getElementById('label-max'),
+            };
+
+            const bundestagsWahlDatenResponse = await fetch('bundestagswahl_2021.json');
+            const bundestagsWahlDaten = await bundestagsWahlDatenResponse.json();
+
+            Promise.all([
+                fetch('bundestagswahl_2021_wahlkreise.geojson').then(res => res.json()),
+                fetch('constituency_similarities.json').then(res => res.json())
+            ])
+            .then(([geojsonData, similarityData]) => {
+                slider.addEventListener('input', function () {
+                minSimilarity = parseFloat(slider.value);
+                sliderValue.textContent = minSimilarity.toFixed(2);
+
+                // Aktualisiere die dynamische Legende
+                updateLegend();
+                if (lastClickedWkrNr) {
+                    updateStyles();
+                }
+            });
+
+            function updateLegend() {
+                const startColor = `rgb(191, 191, 191)`; // Weiß
+                const endColor = `rgb(0, 0, 0)`; // Schwarz
+                legend.style.background = `linear-gradient(to right, ${startColor}, ${endColor})`;
+
+                // Dynamische Prozentangaben
+                const minPercent = Math.round(minSimilarity * 100);
+                const maxPercent = 100;
+
+                // Berechnung der Zwischenwerte
+                const range = maxPercent - minPercent;
+                const quarterPercent = minPercent + Math.round(range * 0.25);
+                const halfPercent = minPercent + Math.round(range * 0.5);
+                const threeQuarterPercent = minPercent + Math.round(range * 0.75);
+
+                // Setze die Beschriftungen
+                legendLabels.min.textContent = `${minPercent}%`;
+                legendLabels.quarter.textContent = `${quarterPercent}%`;
+                legendLabels.half.textContent = `${halfPercent}%`;
+                legendLabels.threeQuarters.textContent = `${threeQuarterPercent}%`;
+                legendLabels.max.textContent = `${maxPercent}%`;
+
+                // Positionen berechnen
+                const legendWidth = 300; // Breite der Skala
+                const positions = [
+                    0, // Min
+                    legendWidth * 0.25, // 25%
+                    legendWidth * 0.5, // 50%
+                    legendWidth * 0.75, // 75%
+                    legendWidth, // Max
+                ];
+                const labels = Object.values(legendLabels);
+                positions.forEach((pos, index) => {
+                    labels[index].style.left = `${pos}px`;
+                });
+            }
+
+                function getColor(similarity) {
+                    if (similarity <= minSimilarity) {
+                        return 'rgb(191, 191, 191)'; // Weiß für zu geringe Ähnlichkeit
+                    }
+                    const ratio = (similarity - minSimilarity) / (1 - minSimilarity); // Skala anpassen
+                    const grayValue = Math.round(191 * (1 - ratio));
+                    return `rgb(${grayValue}, ${grayValue}, ${grayValue})`; // Weiß bis Schwarz
+                }
+
+                function updateStyles() {
+                    geojsonLayer.eachLayer(layer => {
+                        const currentWkrNr = layer.feature.properties.WKR_NR;
+                        if (currentWkrNr !== lastClickedWkrNr) {
+                            const similarity = similarityData[lastClickedWkrNr]
+                            ? similarityData[lastClickedWkrNr][currentWkrNr] || 0
+                            : 0;
+                            const color = getColor(similarity);
+                            layer.setStyle({
+                                fillColor: color,
+                                weight: 1,
+                                opacity: 1,
+                                color: 'white',
+                                fillOpacity: 0.7,
+                            });
+                        }
+                    });
+                }
+
+                function resetStyles() {
+                    geojsonLayer.eachLayer(layer => {
+                        layer.setStyle({
+                            fillColor: 'rgb(169, 169, 169)', // Standardfarbe: Grau
+                            weight: 1,
+                            opacity: 1,
+                            color: 'white',
+                            fillOpacity: 0.6,
+                        });
+                    });
+                }
+
+                function onEachFeature(feature, layer) {
+                    layer.on('click', function () {
+                        const clickedWkrNr = feature.properties.WKR_NR;
+
+                        if (clickedWkrNr === lastClickedWkrNr) {
+                            resetStyles();
+                            lastClickedWkrNr = null;
+                            document.getElementById('info').innerHTML = 'Kein Wahlkreis ausgewählt.';
+                        } else {
+                            lastClickedWkrNr = clickedWkrNr;
+
+                            // Stile aktualisieren
+                            updateStyles();
+
+                            // Stil und Vordergrund für den aktuellen Layer setzen
+                            layer.setStyle({
+                                fillColor: 'rgb(127, 63, 0)', // Gelb
+                            });
+
+                            showInfo(clickedWkrNr);
+                        }
+                    });
+                }
+
+                 // Hilfsfunktion, um verwandteste und am wenigsten verwandte Wahlkreise zu finden
+                function findClosestAndLeastSimilar(wkrNr) {
+                    const similarities = similarityData[wkrNr];
+                    if (!similarities) return { closest: null, least: null };
+
+                    let closest = null;
+                    let least = null;
+                    let maxSimilarity = -1;
+                    let minSimilarity = 2;
+
+                    for (const key in similarities) {
+                        const value = similarities[key];
+                        const currentWkrNr = parseInt(key);
+                        if (currentWkrNr === wkrNr) continue; // Ignoriere den aktuellen Wahlkreis
+
+                        if (value > maxSimilarity) {
+                            maxSimilarity = value;
+                            closest = currentWkrNr;
+                        }
+
+                        if (value < minSimilarity) {
+                            minSimilarity = value;
+                            least = currentWkrNr;
+                        }
+                    }
+
+                    return { closest, least };
+                }
+
+                function wahlkreisname(wahlkreisNummer) {
+                    return bundestagsWahlDaten.find(wahlkreis => wahlkreis.id === wahlkreisNummer + 1)?.wahlkreisname;
+                }
+
+                // Funktion, um Info anzuzeigen
+                function showInfo(wkrNr) {
+                    const { closest, least } = findClosestAndLeastSimilar(wkrNr);
+
+                    const infoBox = document.getElementById('info');
+                    let infoText = `Angeklickter Wahlkreis: ${wahlkreisname(wkrNr-1)}<br>`;
+
+                    if (closest) {
+                        const closestName = wahlkreisname(closest-1);
+                        infoText += `Verwandtester Wahlkreis: ${closestName} (Ähnlichkeit: ${(similarityData[wkrNr][closest] * 100).toFixed(1)}%)<br>`;
+                    } else {
+                        infoText += `Verwandtester Wahlkreis: Keine Daten verfügbar<br>`;
+                    }
+
+                    if (least) {
+                        const leastName = wahlkreisname(least-1);
+                        infoText += `Am wenigsten verwandter Wahlkreis: ${leastName} (Ähnlichkeit: ${(similarityData[wkrNr][least] * 100).toFixed(1)}%)<br>`;
+                    } else {
+                        infoText += `Am wenigsten verwandter Wahlkreis: Keine Daten verfügbar<br>`;
+                    }
+
+                    infoBox.innerHTML = infoText;
+                }
+
+                // Info-Box in HTML hinzufügen
+                document.body.insertAdjacentHTML(
+                    'beforeend',
+                    `<div id="info" style="position: absolute; top: 10px; left: 10px; background: white; padding: 10px; border: 1px solid gray; z-index: 1000;">
+                        Kein Wahlkreis ausgewählt.
+                     </div>`
+                );
+
+                const geojsonLayer = L.geoJSON(geojsonData, {
+                    onEachFeature: onEachFeature,
+                    style: function () {
+                        return {
+                            color: 'white',
+                            weight: 1,
+                            opacity: 1,
+                            fillColor: 'rgb(169, 169, 169)', // Standardfarbe: Grau
+                            fillOpacity: 0.6,
+                        };
+                    }
+                }).addTo(map);
+
+                updateLegend();
+            })
+            .catch(error => console.error('Fehler beim Laden der Daten:', error));
+
+        })();
+    </script>
+</body>
+</html>
